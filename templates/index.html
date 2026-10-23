@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="cyber">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPython vs Cython // Native Benchmark & Telemetry Terminal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=2.2">
+    <!-- Chart.js for benchmark visualization charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- CRT Scanlines and phosphor bloom overlay container -->
+    <div class="crt-overlay" id="crt-overlay"></div>
+    <div class="crt-scanlines"></div>
+
+    <div class="terminal-window">
+        <!-- Terminal Title Bar -->
+        <header class="terminal-titlebar">
+            <div class="titlebar-left">
+                <div class="window-controls">
+                    <span class="win-btn win-close" title="Close"></span>
+                    <span class="win-btn win-min" title="Minimize"></span>
+                    <span class="win-btn win-max" title="Maximize"></span>
+                </div>
+                <div class="terminal-session-info">
+                    <span class="prompt-user">shrey@darwin-arm64</span>
+                    <span class="prompt-sep">:</span>
+                    <span class="prompt-path">~/benchmarks/cython-vs-cpython</span>
+                    <span class="prompt-branch">(main)</span>
+                </div>
+            </div>
+
+            <div class="titlebar-center">
+                <span class="status-indicator live">
+                    <span class="status-glyph">[●]</span> SYS_IDLE
+                </span>
+                <span class="sep">|</span>
+                <span class="sys-spec">CC: clang-16 -O3</span>
+                <span class="sep">|</span>
+                <span class="sys-spec">PY: 3.14.0 CPython</span>
+                <span class="sep">|</span>
+                <span class="sys-spec">CY: 3.3.0</span>
+            </div>
+
+            <div class="titlebar-right">
+                <div class="theme-picker-group">
+                    <label class="term-kbd-label">THEME:</label>
+                    <button class="term-theme-btn active" data-settheme="cyber" id="theme-cyber" onclick="setTheme('cyber')" title="Cyber Cyan Matrix">[CYBER]</button>
+                    <button class="term-theme-btn" data-settheme="phosphor" id="theme-phosphor" onclick="setTheme('phosphor')" title="VT220 Phosphor Green">[GREEN]</button>
+                    <button class="term-theme-btn" data-settheme="amber" id="theme-amber" onclick="setTheme('amber')" title="IBM 3270 Amber">[AMBER]</button>
+                </div>
+                <button class="term-tool-btn" id="btn-toggle-crt" onclick="toggleCrt()" title="Toggle CRT scanline raster effect">
+                    <span class="kbd">[C]</span> CRT: <span id="crt-status-text">OFF</span>
+                </button>
+                <button class="term-tool-btn" id="btn-open-help" onclick="toggleHelp(true)" title="Keyboard Shortcuts Cheat Sheet">
+                    <span class="kbd">[?]</span> HELP
+                </button>
+            </div>
+        </header>
+
+        <!-- System Architecture Ticker Banner -->
+        <div class="sys-banner-bar">
+            <div class="banner-prompt-symbol">$</div>
+            <div class="banner-command">sysctl -n machdep.cpu.brand_string &amp;&amp; ./benchmark_engine --report=hardware</div>
+            <div class="banner-right-info">
+                <span>ARCH: Apple M-Series (ARM64)</span>
+                <span class="dot">&bull;</span>
+                <span>CACHE: 128KB L1 / 32MB SLC</span>
+                <span class="dot">&bull;</span>
+                <span>PID: 16698</span>
+                <span class="dot">&bull;</span>
+                <span class="clock-display" id="clock-display">00:00:00</span>
+            </div>
+        </div>
+
+        <!-- Main Navigation Tabs (Terminal Buffer Style) -->
+        <nav class="nav-tabs" role="tablist">
+            <button class="nav-btn active" data-tab="visualizer-tab" id="btn-tab-vis" onclick="selectTab('visualizer-tab')">
+                <span class="tab-index">[1]</span>
+                <span class="tab-name">INTERACTIVE_VISUALIZER.c</span>
+                <span class="tab-status">&#9679;</span>
+            </button>
+            <button class="nav-btn" data-tab="matrix-tab" id="btn-tab-matrix" onclick="selectTab('matrix-tab')">
+                <span class="tab-index">[2]</span>
+                <span class="tab-name">SPEEDUP_MATRIX.dat</span>
+            </button>
+            <button class="nav-btn" data-tab="code-tab" id="btn-tab-code" onclick="selectTab('code-tab')">
+                <span class="tab-index">[3]</span>
+                <span class="tab-name">VIMDIFF_SOURCE.diff</span>
+            </button>
+            <div class="tab-fill-line"></div>
+            <div class="tab-kbd-hint">Press [1], [2], [3] to switch buffers</div>
+        </nav>
+
+        <!-- TAB 1: VISUALIZER & BENCHMARK -->
+        <main class="tab-content active" id="visualizer-tab">
+            <div class="dashboard-grid">
+                <!-- Left Control Panel: Terminal Parameters -->
+                <aside class="panel controls-panel">
+                    <div class="panel-header">
+                        <span class="box-corner">&#9484;&#9472;</span>
+                        <h2 class="panel-title">ALGO_CONFIG_TTY</h2>
+                        <span class="panel-header-sub">/dev/input/params</span>
+                        <span class="box-fill">&#9472;&#9488;</span>
+                    </div>
+
+                    <!-- Algorithm Selection -->
+                    <div class="control-group">
+                        <div class="control-label-row">
+                            <label class="control-label">--algorithm=&lt;type&gt;</label>
+                            <span class="hotkey-badge">[Keys: 1-3]</span>
+                        </div>
+                        <div class="algo-selector">
+                            <button class="algo-choice active" data-algo="dijkstra" id="algo-dijkstra" onclick="setAlgorithm('dijkstra')">
+                                <span class="algo-tag">[D]</span>
+                                <div class="algo-meta">
+                                    <span class="algo-name">DIJKSTRA</span>
+                                    <span class="algo-desc">Uniform cost &bull; Min-heap expansion</span>
+                                </div>
+                            </button>
+                            <button class="algo-choice" data-algo="astar" id="algo-astar" onclick="setAlgorithm('astar')">
+                                <span class="algo-tag">[A]</span>
+                                <div class="algo-meta">
+                                    <span class="algo-name">A* SEARCH</span>
+                                    <span class="algo-desc">Heuristic f(n) = g(n) + h(n)</span>
+                                </div>
+                            </button>
+                            <button class="algo-choice" data-algo="nqueens" id="algo-nqueens" onclick="setAlgorithm('nqueens')">
+                                <span class="algo-tag">[Q]</span>
+                                <div class="algo-meta">
+                                    <span class="algo-name">N-QUEENS</span>
+                                    <span class="algo-desc">Bitmask backtracking &bull; GIL-free</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Parameters for Grid / Pathfinding -->
+                    <div id="grid-controls" class="sub-controls-section">
+                        <!-- Grid Size -->
+                        <div class="control-group">
+                            <div class="label-with-val">
+                                <label class="control-label">--grid-dim=&lt;N&gt;</label>
+                                <span class="badge-val" id="grid-size-val">40 x 40</span>
+                            </div>
+                            <div class="stepper-slider-row">
+                                <button class="stepper-btn" id="btn-grid-dec" onclick="stepGridSize(-5)" title="Decrease size by 5">-</button>
+                                <input type="range" id="grid-size-slider" min="20" max="80" step="5" value="40" class="styled-slider" oninput="handleGridSizeInput(this.value)" onchange="loadGrid()">
+                                <button class="stepper-btn" id="btn-grid-inc" onclick="stepGridSize(5)" title="Increase size by 5">+</button>
+                            </div>
+                            <div class="slider-ticks">
+                                <span>20x20</span>
+                                <span>40x40</span>
+                                <span>60x60</span>
+                                <span>80x80</span>
+                            </div>
+                        </div>
+
+                        <!-- Obstacle Density -->
+                        <div class="control-group">
+                            <div class="label-with-val">
+                                <label class="control-label">--wall-density=&lt;%&gt;</label>
+                                <span class="badge-val" id="density-val">22%</span>
+                            </div>
+                            <div class="stepper-slider-row">
+                                <button class="stepper-btn" id="btn-density-dec" onclick="stepDensity(-1)" title="Decrease density by 1%">&lt;</button>
+                                <input type="range" id="density-slider" min="5" max="35" step="1" value="22" class="styled-slider" oninput="handleDensityInput(this.value)" onchange="loadGrid()">
+                                <button class="stepper-btn" id="btn-density-inc" onclick="stepDensity(1)" title="Increase density by 1%">&gt;</button>
+                            </div>
+                            <div class="slider-ticks">
+                                <span>5%</span>
+                                <span>15%</span>
+                                <span>25%</span>
+                                <span>35%</span>
+                            </div>
+                        </div>
+
+                        <!-- A* Heuristic Select -->
+                        <div class="control-group" id="heuristic-group" style="display: none;">
+                            <label class="control-label">--heuristic=&lt;metric&gt;</label>
+                            <select id="heuristic-select" class="styled-select" onchange="updateCliPreview()">
+                                <option value="manhattan">MANHATTAN (L1 Norm: |dx| + |dy|)</option>
+                                <option value="euclidean">EUCLIDEAN (L2 Norm: sqrt(dx^2 + dy^2))</option>
+                            </select>
+                        </div>
+
+                        <!-- Terrain Seed & Regenerate -->
+                        <div class="control-group">
+                            <div class="label-with-val">
+                                <label class="control-label">--seed=&lt;hex&gt;</label>
+                                <span class="badge-val seed-tag" id="seed-val">0x002A (42)</span>
+                            </div>
+                            <div class="action-buttons-row">
+                                <button id="btn-regen-grid" onclick="reseedTerrain()" class="btn-secondary" title="Randomize seed (Hotkey: G)">
+                                    <span class="btn-glyph">&#8635;</span> RE-SEED TERRAIN [G]
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Parameters for N-Queens -->
+                    <div id="nqueens-controls" class="sub-controls-section" style="display: none;">
+                        <div class="control-group">
+                            <div class="label-with-val">
+                                <label class="control-label">--queens=&lt;N&gt;</label>
+                                <span class="badge-val" id="nqueens-val">12</span>
+                            </div>
+                            <div class="stepper-slider-row">
+                                <button class="stepper-btn" id="btn-nq-dec" onclick="stepNQueens(-1)">-</button>
+                                <input type="range" id="nqueens-slider" min="8" max="14" step="1" value="12" class="styled-slider" oninput="handleNQueensInput(this.value)">
+                                <button class="stepper-btn" id="btn-nq-inc" onclick="stepNQueens(1)">+</button>
+                            </div>
+                            <div class="slider-ticks">
+                                <span>N=8</span>
+                                <span>N=10</span>
+                                <span>N=12 (14.2k)</span>
+                                <span>N=14 (365k)</span>
+                            </div>
+                            <div class="term-note-box">
+                                <span class="note-prefix">[INFO]</span> N=12 traverses 14,200 solutions. N=13 has 73,712 solutions. Pure Python takes ~1.0s, Cython completes in ~24ms.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live CLI Command Generator -->
+                    <div class="cli-preview-box">
+                        <div class="cli-preview-header">
+                            <span class="cli-label">SHELL COMMAND GENERATOR</span>
+                            <button class="cli-copy-btn" id="btn-copy-cli" onclick="copyCliCommand()" title="Copy CLI Command to Clipboard">COPY [&#9099;]</button>
+                        </div>
+                        <div class="cli-code-row">
+                            <span class="cli-prompt">$</span>
+                            <code class="cli-cmd-text" id="cli-cmd-preview">./run.sh benchmark --algo=dijkstra --grid=40x40 --density=0.22 --seed=42</code>
+                        </div>
+                    </div>
+
+                    <!-- Execute Benchmark Button -->
+                    <button id="btn-run-benchmark" onclick="runBenchmark()" class="btn-primary-term">
+                        <span class="btn-indicator">&#9654;</span>
+                        <span class="btn-text">EXECUTE BENCHMARK &amp; VISUALIZE</span>
+                        <span class="btn-hotkey">[ENTER]</span>
+                    </button>
+
+                    <!-- Terminal Telemetry Log Stream -->
+                    <div class="term-log-container">
+                        <div class="term-log-header">
+                            <span class="log-title">&#9632; TTY1 EXECUTION STREAM</span>
+                            <button class="log-clear-btn" id="btn-clear-log" onclick="clearLog()">[CLR]</button>
+                        </div>
+                        <div class="term-log-body" id="term-log">
+                            <div class="log-line"><span class="log-ts">[00:00:00.001]</span> <span class="log-sys">sys:</span> Cython compiler extensions verified (-O3)</div>
+                            <div class="log-line"><span class="log-ts">[00:00:00.002]</span> <span class="log-sys">sys:</span> Grid memory allocated: 40x40 (1,600 nodes)</div>
+                            <div class="log-line"><span class="log-ts">[00:00:00.003]</span> <span class="log-ready">ready:</span> Press [ENTER] or click Execute to run benchmark</div>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Center & Right: Telemetry Instruments & Visual Canvas -->
+                <section class="visualizer-content">
+                    <!-- Top Telemetry Instrumentation Gauges -->
+                    <div class="metrics-row">
+                        <!-- CPython Metric Card -->
+                        <div class="metric-card card-py">
+                            <div class="metric-header">
+                                <span class="badge-tag py-tag">CPython 3.14</span>
+                                <span class="metric-status-code">INTERPRETED</span>
+                            </div>
+                            <div class="metric-metric-title">EXECUTION LATENCY</div>
+                            <div class="metric-value" id="val-py-time">-- <span class="unit">ms</span></div>
+                            <div class="metric-sub" id="sub-py-time">Bytecode opcode eval + heap tuples</div>
+                            <div class="metric-ascii-meter">
+                                <span class="meter-label">PY:</span>
+                                <span class="meter-bar" id="meter-py">[--------------------]</span>
+                            </div>
+                        </div>
+
+                        <!-- Cython Metric Card -->
+                        <div class="metric-card card-cy">
+                            <div class="metric-header">
+                                <span class="badge-tag cy-tag">Cython C-Ext</span>
+                                <span class="metric-status-code">CLANG -O3</span>
+                            </div>
+                            <div class="metric-metric-title">EXECUTION LATENCY</div>
+                            <div class="metric-value" id="val-cy-time">-- <span class="unit">ms</span></div>
+                            <div class="metric-sub" id="sub-cy-time">Native hardware registers + flat 1D C array</div>
+                            <div class="metric-ascii-meter">
+                                <span class="meter-label">CY:</span>
+                                <span class="meter-bar" id="meter-cy">[--------------------]</span>
+                            </div>
+                        </div>
+
+                        <!-- Speedup Factor Metric Card -->
+                        <div class="metric-card card-speedup">
+                            <div class="metric-header">
+                                <span class="badge-tag speedup-tag">Speedup Factor</span>
+                                <span class="metric-status-code">DELTA</span>
+                            </div>
+                            <div class="metric-metric-title">ACCELERATION RATIO</div>
+                            <div class="metric-value speedup-glow" id="val-speedup">-- <span class="unit">x</span></div>
+                            <div class="metric-sub" id="sub-speedup">Awaiting benchmark execution...</div>
+                            <div class="metric-ascii-meter">
+                                <span class="meter-label">ACC:</span>
+                                <span class="meter-bar-fill" id="meter-acc">[░░░░░░░░░░░░░░░░░░░░]</span>
+                            </div>
+                        </div>
+
+                        <!-- Solution Stats Metric Card -->
+                        <div class="metric-card card-details">
+                            <div class="metric-header">
+                                <span class="badge-tag info-tag" id="label-stat-extra">TELEMETRY</span>
+                                <span class="metric-status-code">RUNTIME</span>
+                            </div>
+                            <div class="metric-metric-title">TRAVERSAL METRICS</div>
+                            <div class="metric-value" id="val-stat-extra">--</div>
+                            <div class="metric-sub" id="sub-stat-extra">Nodes visited / explored path cost</div>
+                            <div class="metric-ascii-meter">
+                                <span class="meter-label">EFF:</span>
+                                <span class="meter-bar" id="meter-eff">[--------------------]</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visual Canvas Area: Vector Oscilloscope Display -->
+                    <div class="panel canvas-panel">
+                        <div class="canvas-header">
+                            <div class="canvas-header-left">
+                                <span class="canvas-matrix-glyph">&#9638;</span>
+                                <h3 class="canvas-title" id="canvas-heading">2D Grid Shortest Path &amp; Exploration Wavefront</h3>
+                                <span class="canvas-dim-badge" id="canvas-dim-badge">[40 x 40]</span>
+                            </div>
+                            <div class="canvas-legend" id="grid-legend">
+                                <span class="legend-item"><span class="legend-swatch swatch-start"></span> START [S]</span>
+                                <span class="legend-item"><span class="legend-swatch swatch-goal"></span> GOAL [G]</span>
+                                <span class="legend-item"><span class="legend-swatch swatch-wall"></span> WALL (#)</span>
+                                <span class="legend-item"><span class="legend-swatch swatch-weight"></span> WEIGHT (~)</span>
+                                <span class="legend-item"><span class="legend-swatch swatch-explored"></span> EXP_WAVE</span>
+                                <span class="legend-item"><span class="legend-swatch swatch-path"></span> OPT_PATH</span>
+                            </div>
+                        </div>
+
+                        <!-- Canvas Container -->
+                        <div class="canvas-wrapper" id="canvas-frame">
+                            <div class="canvas-corner top-left">&#9484;</div>
+                            <div class="canvas-corner top-right">&#9488;</div>
+                            <div class="canvas-corner bottom-left">&#9492;</div>
+                            <div class="canvas-corner bottom-right">&#9496;</div>
+
+                            <!-- Coordinate Rulers -->
+                            <div class="canvas-ruler horizontal" id="ruler-h">
+                                <span>00</span><span>10</span><span>20</span><span>30</span><span>40</span>
+                            </div>
+                            <div class="canvas-ruler vertical" id="ruler-v">
+                                <span>00</span><span>10</span><span>20</span><span>30</span><span>40</span>
+                            </div>
+
+                            <canvas id="main-canvas" width="580" height="580"></canvas>
+                            <!-- N-Queens Board Wrapper (when active) -->
+                            <div id="chessboard-container" style="display: none;"></div>
+                        </div>
+
+                        <!-- Canvas Footer Telemetry Bar -->
+                        <div class="canvas-footer-bar">
+                            <div class="canvas-status-item">
+                                <span class="item-lbl">FRAME_BUFFER:</span>
+                                <span class="item-val">580x580 RGB24</span>
+                            </div>
+                            <div class="canvas-status-item">
+                                <span class="item-lbl">SAMPLING:</span>
+                                <span class="item-val" id="tele-sampling">100% (No sub-sampling)</span>
+                            </div>
+                            <div class="canvas-status-item">
+                                <span class="item-lbl">ALGO_MODE:</span>
+                                <span class="item-val" id="tele-algo">Dijkstra Min-Heap</span>
+                            </div>
+                            <div class="canvas-status-item">
+                                <span class="item-lbl">HEAP_MEMORY:</span>
+                                <span class="item-val">O(V) Contiguous Buffer</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- TAB 2: SPEEDUP MATRIX & COMPARISON CHARTS -->
+        <section class="tab-content" id="matrix-tab">
+            <div class="matrix-wrapper">
+                <div class="matrix-header-bar">
+                    <div>
+                        <div class="tab-headline-row">
+                            <span class="prompt-sym">$</span>
+                            <h2>SPEEDUP_SCALING_MATRIX.dat</h2>
+                        </div>
+                        <p class="subtitle">Multi-scale execution latency profile across varying grid sizes and problem permutations</p>
+                    </div>
+                    <div class="matrix-actions-group">
+                        <button id="btn-export-json" onclick="exportJsonFile()" class="btn-secondary" title="Export raw benchmark data as JSON">
+                            <span>{ }</span> EXPORT JSON
+                        </button>
+                        <button id="btn-export-csv" onclick="exportCsvFile()" class="btn-secondary" title="Export benchmark data as CSV">
+                            <span>&#9776;</span> EXPORT CSV
+                        </button>
+                        <button id="btn-refresh-suite" onclick="loadBenchmarkSuite()" class="btn-secondary">
+                            <span class="btn-glyph">&#8635;</span> RUN FULL MATRIX SUITE
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Terminal Data Table -->
+                <div class="panel term-table-panel">
+                    <div class="term-table-header">
+                        <span class="table-title">&#9632; SCALE-UP BENCHMARK SUMMARY TABLE</span>
+                        <span class="table-sub">Units: milliseconds (ms) | Lower is faster</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="term-data-table" id="matrix-summary-table">
+                            <thead>
+                                <tr>
+                                    <th>ALGORITHM</th>
+                                    <th>SCALE</th>
+                                    <th>CPYTHON (MS)</th>
+                                    <th>CYTHON (MS)</th>
+                                    <th>DELTA (MS)</th>
+                                    <th>SPEEDUP</th>
+                                    <th>RELATIVE PERFORMANCE GAUGE</th>
+                                </tr>
+                            </thead>
+                            <tbody id="matrix-table-body">
+                                <tr>
+                                    <td>N-Queens</td><td>N=8</td><td>0.38</td><td>0.01</td><td>-0.37</td><td class="term-accent">38.0x</td><td><span class="ascii-bar">[████████████████████]</span></td>
+                                </tr>
+                                <tr>
+                                    <td>N-Queens</td><td>N=10</td><td>7.42</td><td>0.19</td><td>-7.23</td><td class="term-accent">39.1x</td><td><span class="ascii-bar">[████████████████████]</span></td>
+                                </tr>
+                                <tr>
+                                    <td>N-Queens</td><td>N=12</td><td>185.10</td><td>4.82</td><td>-180.28</td><td class="term-accent">38.4x</td><td><span class="ascii-bar">[████████████████████]</span></td>
+                                </tr>
+                                <tr>
+                                    <td>Dijkstra</td><td>40x40</td><td>38.20</td><td>1.08</td><td>-37.12</td><td class="term-accent">35.4x</td><td><span class="ascii-bar">[█████████████████░░░]</span></td>
+                                </tr>
+                                <tr>
+                                    <td>A* Search</td><td>40x40</td><td>19.40</td><td>0.85</td><td>-18.55</td><td class="term-accent">22.8x</td><td><span class="ascii-bar">[████████████░░░░░░░░]</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Charts Section: Oscilloscope Displays -->
+                <div class="charts-grid">
+                    <!-- Chart 1: N-Queens -->
+                    <div class="panel chart-card">
+                        <div class="chart-header">
+                            <span class="chart-tag">[N-QUEENS]</span>
+                            <h3>Solution Space Search Latency</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="chart-nqueens"></canvas>
+                        </div>
+                        <div class="chart-summary-badge" id="nqueens-summary-badge">
+                            <span class="summary-prefix">&gt;&gt;</span> N-Queens Speedup: <strong class="term-highlight">~38x to ~42x faster</strong>
+                        </div>
+                    </div>
+
+                    <!-- Chart 2: Dijkstra -->
+                    <div class="panel chart-card">
+                        <div class="chart-header">
+                            <span class="chart-tag">[DIJKSTRA]</span>
+                            <h3>Grid Dimension Latency Profile</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="chart-dijkstra"></canvas>
+                        </div>
+                        <div class="chart-summary-badge" id="dijkstra-summary-badge">
+                            <span class="summary-prefix">&gt;&gt;</span> Dijkstra Speedup: <strong class="term-highlight">~12x to ~35x faster</strong>
+                        </div>
+                    </div>
+
+                    <!-- Chart 3: A* Search -->
+                    <div class="panel chart-card">
+                        <div class="chart-header">
+                            <span class="chart-tag">[A* SEARCH]</span>
+                            <h3>Heuristic-Guided Search Latency</h3>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="chart-astar"></canvas>
+                        </div>
+                        <div class="chart-summary-badge" id="astar-summary-badge">
+                            <span class="summary-prefix">&gt;&gt;</span> A* Search Speedup: <strong class="term-highlight">~16x to ~25x faster</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 3: CODE INSPECTOR & OPTIMIZATION DETAILS (VIMDIFF STYLE) -->
+        <section class="tab-content" id="code-tab">
+            <div class="code-inspector-wrapper">
+                <div class="code-header-bar">
+                    <div class="tab-headline-row">
+                        <span class="prompt-sym">$</span>
+                        <h2>vimdiff pure_python.py cython_native.pyx</h2>
+                    </div>
+                    <div class="code-algo-select">
+                        <button class="code-btn active" data-codealgo="nqueens" onclick="switchCodeAlgo('nqueens')">[1] N-Queens</button>
+                        <button class="code-btn" data-codealgo="dijkstra" onclick="switchCodeAlgo('dijkstra')">[2] Dijkstra</button>
+                        <button class="code-btn" data-codealgo="astar" onclick="switchCodeAlgo('astar')">[3] A* Search</button>
+                    </div>
+                </div>
+
+                <!-- Optimization Man Page Dossier -->
+                <div class="panel highlights-panel">
+                    <div class="man-page-header">
+                        <span>MANPAGE: CYTHON_COMPILATION_PASS(7)</span>
+                        <span>SECTION: HARDWARE REGISTER OPTIMIZATIONS</span>
+                    </div>
+                    <h3 class="man-title">ARCHITECTURAL SPEEDUP MECHANISMS:</h3>
+                    <ul class="highlights-list" id="code-highlights">
+                        <!-- Populated dynamically via JS -->
+                    </ul>
+                </div>
+
+                <!-- Side by side code view: Vimdiff splits -->
+                <div class="code-split-view">
+                    <div class="code-pane">
+                        <div class="pane-header py-pane-header">
+                            <span class="pane-title">[LEFT: BUF 1] cpython_algorithm.py</span>
+                            <span class="file-tag">MODE: INTERPRETED (C-EVAL LOOP)</span>
+                        </div>
+                        <div class="code-scroll-wrapper">
+                            <pre class="code-block"><code id="code-py">Loading pure Python source...</code></pre>
+                        </div>
+                    </div>
+
+                    <div class="code-pane">
+                        <div class="pane-header cy-pane-header">
+                            <span class="pane-title">[RIGHT: BUF 2] cython_native.pyx</span>
+                            <span class="file-tag">MODE: COMPILED C (CLANG -O3)</span>
+                        </div>
+                        <div class="code-scroll-wrapper">
+                            <pre class="code-block"><code id="code-cy">Loading Cython source...</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Terminal Status Bar (Vim / Tmux style bottom bar) -->
+        <footer class="terminal-statusbar">
+            <div class="statusbar-left">
+                <span class="status-mode">[NORMAL]</span>
+                <span class="status-file" id="status-current-algo">ALGO: DIJKSTRA</span>
+                <span class="status-sep">|</span>
+                <span class="status-grid" id="status-current-grid">GRID: 40x40 (1600 cells)</span>
+            </div>
+            <div class="statusbar-center">
+                <span>PRESS <kbd class="term-kbd">SPACE</kbd> TO RUN BENCHMARK</span>
+                <span class="status-sep">&bull;</span>
+                <span><kbd class="term-kbd">G</kbd> NEW TERRAIN</span>
+                <span class="status-sep">&bull;</span>
+                <span><kbd class="term-kbd">1-3</kbd> SWITCH TABS</span>
+                <span class="status-sep">&bull;</span>
+                <span><kbd class="term-kbd">C</kbd> CRT EFFECT</span>
+            </div>
+            <div class="statusbar-right">
+                <span id="term-status-msg">STATUS: READY</span>
+                <span class="status-sep">|</span>
+                <span>UTF-8</span>
+                <span class="status-sep">|</span>
+                <span>100%</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Help Modal / Cheat Sheet Dialog -->
+    <div class="term-modal-backdrop" id="help-modal">
+        <div class="term-modal-box">
+            <div class="term-modal-header">
+                <span class="modal-title">&#9632; TERMINAL KEYBOARD COMMANDS &amp; HELP</span>
+                <button class="modal-close-btn" id="btn-close-help" onclick="toggleHelp(false)">[x]</button>
+            </div>
+            <div class="term-modal-content">
+                <table class="help-table">
+                    <thead>
+                        <tr><th>KEY</th><th>ACTION</th><th>DESCRIPTION</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><kbd>SPACE</kbd> or <kbd>ENTER</kbd></td><td>Run Benchmark</td><td>Executes CPython vs Cython benchmark with live animation</td></tr>
+                        <tr><td><kbd>1</kbd>, <kbd>2</kbd>, <kbd>3</kbd></td><td>Switch Tabs</td><td>Visualizer (1), Speedup Matrix (2), Vimdiff Code (3)</td></tr>
+                        <tr><td><kbd>D</kbd>, <kbd>A</kbd>, <kbd>Q</kbd></td><td>Select Algorithm</td><td>Dijkstra (D), A* Search (A), N-Queens (Q)</td></tr>
+                        <tr><td><kbd>G</kbd></td><td>Re-seed Terrain</td><td>Generates new random obstacle layout and weights</td></tr>
+                        <tr><td><kbd>C</kbd></td><td>Toggle CRT</td><td>Turns vintage CRT scanlines and phosphor bloom ON/OFF</td></tr>
+                        <tr><td><kbd>T</kbd></td><td>Cycle Color Theme</td><td>Cycles Cyber Cyan &rarr; Phosphor Green &rarr; Amber</td></tr>
+                        <tr><td><kbd>?</kbd></td><td>Toggle Help</td><td>Displays or hides this cheat sheet modal</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="term-modal-footer">
+                <span>Press <kbd>ESC</kbd> or click [x] to return to terminal</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=2.2"></script>
+</body>
+</html>
